@@ -148,8 +148,20 @@ async function downloadImage(fileId: string): Promise<Buffer> {
   return Buffer.from(data as ArrayBuffer)
 }
 
-// 取得目前最新 blog 編號
-async function getNextBlogNumber(): Promise<number> {
+// 取得並「鎖定」下一個可用的 blog 編號。
+// 單純讀目錄算 max+1 在兩個流程幾乎同時觸發時會算出同一個號碼（race condition）。
+// 這裡借用 git ref 的原子建立特性當作跨流程的鎖：同一個 ref 名稱只有一個 createRef 會成功，
+// 失敗（422 Reference already exists）就代表號碼被搶走了，往下一個號碼重試。
+// 鎖定用的 ref 永久保留、不刪除（成本極低，純粹是號碼已被使用的標記，即使該次執行後續失敗也一樣，
+// 讓重試一定拿到全新號碼，不會跟失敗留下的殘留檔案撞號）。
+async function reserveNextBlogNumber(): Promise<{ blogNumber: number; baseSha: string }> {
+  const { data: refData } = await octokit.git.getRef({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    ref: `heads/${BASE_BRANCH}`,
+  })
+  const baseSha = refData.object.sha
+
   const { data } = await octokit.repos.getContent({
     owner: REPO_OWNER,
     repo: REPO_NAME,
@@ -164,7 +176,27 @@ async function getNextBlogNumber(): Promise<number> {
     .filter(Boolean)
     .map(m => parseInt(m![1]))
 
-  return Math.max(...numbers) + 1
+  let candidate = Math.max(0, ...numbers) + 1
+
+  const MAX_ATTEMPTS = 20
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    try {
+      await octokit.git.createRef({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        ref: `refs/heads/_blog-number-locks/b${candidate}`,
+        sha: baseSha,
+      })
+      return { blogNumber: candidate, baseSha }
+    } catch (err: any) {
+      if (err.status === 422) {
+        candidate++
+        continue
+      }
+      throw err
+    }
+  }
+  throw new Error(`無法取得可用的文章編號（已嘗試 ${MAX_ATTEMPTS} 次，皆被佔用）`)
 }
 
 // 從 GitHub 讀取檔案（含 sha）
@@ -208,9 +240,10 @@ async function generatePostItem(params: {
   date: string
   title: string
   imageAlt: string
+  imageExt: string
   tags: Array<{ ct: string; blog: string }>
 }): Promise<string> {
-  const { bId, date, title, imageAlt, tags } = params
+  const { bId, date, title, imageAlt, imageExt, tags } = params
 
   const ctClasses = tags.map(t => t.ct).join(' ')
   const blogTags = tags.map(t => `\${{${t.blog}}}\$`).join('、')
@@ -219,7 +252,7 @@ async function generatePostItem(params: {
                         <div class="post-item-wrap">
                             <div class="post-image embed-responsive embed-responsive-4by3">
                                 <a href="${bId}.html" class="embed-responsive-item">
-                                    <img alt="${imageAlt}" src="/images/pages/${bId}_image_1.jpg">
+                                    <img alt="${imageAlt}" src="/images/pages/${bId}_image_1.${imageExt}">
                                 </a>
                             </div>
                             <div class="post-item-description bg-gray-10">
@@ -250,14 +283,14 @@ async function getLatestBlogTemplate(currentBlogNumber: number): Promise<string>
 async function generateBlogHTML(params: {
   docContent: string
   blogNumber: number
-  imageCount: number
+  imageFileNames: string[]
   date: string
   templateHtml: string
   tags: Array<{ ct: string; blog: string }>
   furtherReadingUrl?: string
   furtherReadingText?: string
 }): Promise<string> {
-  const { docContent, blogNumber, imageCount, date, templateHtml, tags, furtherReadingUrl, furtherReadingText } = params
+  const { docContent, blogNumber, imageFileNames, date, templateHtml, tags, furtherReadingUrl, furtherReadingText } = params
   const bId = `b${blogNumber}`
 
   // 延伸閱讀：有才放，沒有就略過
@@ -286,7 +319,7 @@ async function generateBlogHTML(params: {
 - include 路徑（如 @@include('../../../src/head.html')）照抄不要更動
 
 【需要根據新文章替換的部分】
-- 圖片命名改為新編號：${bId}_image_1.jpg、${bId}_image_2.jpg...（共 ${imageCount} 張）
+- 圖片命名改為新編號，依序使用以下檔名（副檔名需完全照抄，不要改成 .jpg）：${imageFileNames.join('、')}
 - 第一張圖放在 h1 上方，其餘圖片依原文順序穿插
 - og:url 改為：https://www.goface.me/zh-TW/blog/zh-TW/${bId}.html
 - 日期改為：${date}
@@ -343,10 +376,15 @@ export async function createBlogPost(params: {
   // 讀取 Doc 內容（含延伸閱讀超連結）
   const { text: docContent, furtherReading } = await getDocContent(docId)
 
-  // 決定文章編號
-  const blogNumber = await getNextBlogNumber()
+  // 決定文章編號（原子鎖定，避免兩個流程同時搶到同一個號碼）
+  const { blogNumber, baseSha } = await reserveNextBlogNumber()
   const bId = `b${blogNumber}`
   const date = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/')
+
+  // 每張圖片實際的副檔名（依 Drive 原始檔名），後面生成 HTML 的 prompt 跟實際上傳路徑都要用同一份，
+  // 避免寫死 .jpg 導致生成的 HTML 引用到不存在的檔案（圖片來源若是 .png 就會整個壞掉）
+  const imageExts = images.map(image => image.name!.split('.').pop()?.toLowerCase() || 'jpg')
+  const imageFileNames = imageExts.map((ext, i) => `${bId}_image_${i + 1}.${ext}`)
 
   // 解析 hashtag 分類
   const tags = parseHashtags(docContent)
@@ -363,7 +401,7 @@ export async function createBlogPost(params: {
   const html = await generateBlogHTML({
     docContent,
     blogNumber,
-    imageCount: images.length,
+    imageFileNames,
     date,
     templateHtml,
     tags,
@@ -371,96 +409,92 @@ export async function createBlogPost(params: {
     furtherReadingText,
   })
 
+  if (!html) throw new Error('HTML 生成失敗')
+
   // 從生成的 HTML 抓 title 和第一張圖 alt（供 post-item 使用）
   const titleMatch = html.match(/<title>([^<]+)<\/title>/)
   const title = titleMatch?.[1]?.trim() || bId
   const altMatch = html.match(/<img[^>]+alt="([^"]+)"[^>]*src="[^"]*_image_1/)
   const imageAlt = altMatch?.[1] || ''
 
-  if (!html) throw new Error('HTML 生成失敗')
-
   // 建立 branch
   const timestamp = Date.now()
   const branchName = `blog/add-${bId}-${timestamp}`
-
-  const { data: refData } = await octokit.git.getRef({
-    owner: REPO_OWNER,
-    repo: REPO_NAME,
-    ref: `heads/${BASE_BRANCH}`,
-  })
 
   await octokit.git.createRef({
     owner: REPO_OWNER,
     repo: REPO_NAME,
     ref: `refs/heads/${branchName}`,
-    sha: refData.object.sha,
+    sha: baseSha,
   })
 
-  // 平行下載所有圖片（Drive API 可並行）
-  const imageBuffers = await Promise.all(
-    images.map(async (image, i) => {
-      const ext = image.name!.split('.').pop()?.toLowerCase() || 'jpg'
-      const imagePath = `src/assets/images/_pages/${bId}_image_${i + 1}.${ext}`
-      const buffer = await downloadImage(image.id!)
-      return { imagePath, buffer }
-    })
-  )
+  // 從這裡開始任何一步失敗，都要把剛建立的 branch 清掉，避免留下沒有 PR 的孤兒分支
+  // （號碼鎖定的 ref 則保留，讓下一次重試一定拿到全新的號碼）
+  try {
+    // 平行下載所有圖片（Drive API 可並行）
+    const imageBuffers = await Promise.all(
+      images.map(async (image, i) => {
+        const imagePath = `src/assets/images/_pages/${imageFileNames[i]}`
+        const buffer = await downloadImage(image.id!)
+        return { imagePath, buffer }
+      })
+    )
 
-  // 依序上傳到 GitHub（GitHub Contents API 不支援同 branch 並行寫入）
-  const uploadedImages: string[] = []
-  for (const { imagePath, buffer } of imageBuffers) {
+    // 依序上傳到 GitHub（GitHub Contents API 不支援同 branch 並行寫入）
+    const uploadedImages: string[] = []
+    for (const { imagePath, buffer } of imageBuffers) {
+      await octokit.repos.createOrUpdateFileContents({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        path: imagePath,
+        message: `blog: add images for ${bId}`,
+        content: buffer.toString('base64'),
+        branch: branchName,
+      })
+      uploadedImages.push(imagePath)
+    }
+
+    // 上傳 HTML
+    const htmlPath = `src/blog/zh-TW/${bId}.html`
     await octokit.repos.createOrUpdateFileContents({
       owner: REPO_OWNER,
       repo: REPO_NAME,
-      path: imagePath,
-      message: `blog: add images for ${bId}`,
-      content: buffer.toString('base64'),
+      path: htmlPath,
+      message: `blog: add ${bId}`,
+      content: Buffer.from(html).toString('base64'),
       branch: branchName,
     })
-    uploadedImages.push(imagePath)
-  }
 
-  // 上傳 HTML
-  const htmlPath = `src/blog/zh-TW/${bId}.html`
-  await octokit.repos.createOrUpdateFileContents({
-    owner: REPO_OWNER,
-    repo: REPO_NAME,
-    path: htmlPath,
-    message: `blog: add ${bId}`,
-    content: Buffer.from(html).toString('base64'),
-    branch: branchName,
-  })
+    // 生成 post-item 並插入 blog.html
+    const postItem = await generatePostItem({ bId, docContent, date, title, imageAlt, imageExt: imageExts[0] || 'jpg', tags })
+    if (!postItem) throw new Error('post-item 生成失敗')
 
-  // 生成 post-item 並插入 blog.html
-  const postItem = await generatePostItem({ bId, docContent, date, title, imageAlt, tags })
-  if (!postItem) throw new Error('post-item 生成失敗')
+    const blogListPath = 'src/blog/zh-TW/blog.html'
+    const blogListFile = await fetchGithubFile(blogListPath)
+    const insertMarker = '<!-- Post item-->'
+    if (!blogListFile.content.includes(insertMarker)) throw new Error('找不到 blog.html 插入點')
 
-  const blogListPath = 'src/blog/zh-TW/blog.html'
-  const blogListFile = await fetchGithubFile(blogListPath)
-  const insertMarker = '<!-- Post item-->'
-  if (!blogListFile.content.includes(insertMarker)) throw new Error('找不到 blog.html 插入點')
+    const updatedBlogList = blogListFile.content.replace(
+      insertMarker,
+      `${insertMarker}\n                    ${postItem}`
+    )
 
-  const updatedBlogList = blogListFile.content.replace(
-    insertMarker,
-    `${insertMarker}\n                    ${postItem}`
-  )
+    await octokit.repos.createOrUpdateFileContents({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      path: blogListPath,
+      message: `blog: add ${bId} to blog list`,
+      content: Buffer.from(updatedBlogList).toString('base64'),
+      sha: blogListFile.sha,
+      branch: branchName,
+    })
 
-  await octokit.repos.createOrUpdateFileContents({
-    owner: REPO_OWNER,
-    repo: REPO_NAME,
-    path: blogListPath,
-    message: `blog: add ${bId} to blog list`,
-    content: Buffer.from(updatedBlogList).toString('base64'),
-    sha: blogListFile.sha,
-    branch: branchName,
-  })
-
-  // 開 PR
-  const { data: pr } = await octokit.pulls.create({
-    owner: REPO_OWNER,
-    repo: REPO_NAME,
-    title: `[Blog] 新增文章 ${bId}`,
-    body: `## 新增部落格文章
+    // 開 PR
+    const { data: pr } = await octokit.pulls.create({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      title: `[Blog] 新增文章 ${bId}`,
+      body: `## 新增部落格文章
 
 **文章編號**：${bId}
 **來源**：${driveFolderUrl}
@@ -476,9 +510,19 @@ ${uploadedImages.map(p => `- \`${p}\``).join('\n')}
 
 ---
 *此 PR 由 goface-bot 自動建立，由 @${slackUser} 發起*`,
-    head: branchName,
-    base: BASE_BRANCH,
-  })
+      head: branchName,
+      base: BASE_BRANCH,
+    })
 
-  return { prUrl: pr.html_url, prNumber: pr.number, blogNumber }
+    return { prUrl: pr.html_url, prNumber: pr.number, blogNumber }
+  } catch (err) {
+    await octokit.git.deleteRef({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      ref: `heads/${branchName}`,
+    }).catch(cleanupErr => {
+      console.error(`清理孤兒 branch ${branchName} 失敗：`, cleanupErr)
+    })
+    throw err
+  }
 }
