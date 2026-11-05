@@ -225,129 +225,131 @@ export async function createSEOPullRequest(params: {
     sha: refData.object.sha,
   })
 
-  const prBodySections: string[] = []
-  const modifiedPaths: string[] = []
+  // 從這裡開始任何一步失敗，都要把剛建立的 branch 清掉，避免留下沒有 PR 的孤兒分支
+  try {
+    const prBodySections: string[] = []
+    const modifiedPaths: string[] = []
 
-  // 依每個 URL 處理所有修改
-  for (const [url, urlChanges] of byUrl) {
+    // 依每個 URL 處理所有修改
+    for (const [url, urlChanges] of byUrl) {
 
-    // 找 src 檔案
-    let srcFile: { path: string; content: string; sha: string } | null = null
-    for (const { original } of urlChanges) {
-      const found = await findSrcFile(url, original)
-      if (found) { srcFile = found; break }
-    }
-    if (!srcFile) throw new Error(`在 src 中找不到對應檔案：${url}`)
-
-    // 套用所有替換
-    let srcContent = srcFile.content
-
-    // 明確標記 Meta Title/Description（extractMetaField 剝出來的 metaField）的修改一律優先處理，
-    // 且只鎖定 <title>/<meta> 標籤範圍替換。
-    // 原因：同一段文字常常同時被當作可見段落與 meta 內容（SEO 慣例），若先跑一般文字取代，
-    // 會用 split/join 把「所有」出現這段文字的地方都換掉（包括 meta 標籤），
-    // 導致後面才處理的 meta 修改因原文已經被換掉而找不到、誤判為失敗。
-    // 分組只看「明確標記」，不能用 detectMetaFieldFromContent 自動判斷來分組——
-    // 若段落文字剛好與 meta 內容一模一樣，會連沒標記的段落修改也一起誤判成 meta 修改，
-    // 導致段落本身永遠沒被換到。自動判斷留給下面第二輪、用當時最新的內容評估即可。
-    const metaChanges = urlChanges.filter(c => c.metaField)
-    const otherChanges = urlChanges.filter(c => !c.metaField)
-
-    for (const { original, replacement, metaField } of metaChanges) {
-      const { content: updated, matched } = applyMetaFieldChange(srcContent, metaField!, original, replacement)
-      if (!matched) {
-        const fieldLabel = metaField === 'title' ? 'Meta Title' : 'Meta Description'
-        throw new Error(`找不到 ${fieldLabel} 原文「${original}」，請確認文字與頁面 <title>/<meta> 標籤內容完全一致。`)
+      // 找 src 檔案
+      let srcFile: { path: string; content: string; sha: string } | null = null
+      for (const { original } of urlChanges) {
+        const found = await findSrcFile(url, original)
+        if (found) { srcFile = found; break }
       }
-      srcContent = updated
-    }
+      if (!srcFile) throw new Error(`在 src 中找不到對應檔案：${url}`)
 
-    for (const { original, replacement, action } of otherChanges) {
-      // 沒有明確標記的修改，仍用內容自動判斷是否其實是在改 meta 欄位（見 detectMetaFieldFromContent）。
-      // 用「目前」的 srcContent 判斷：若上面那輪已經把 meta 標籤換成新文字，這裡就不會再誤判，
-      // 能正確落回一般文字取代，改到可見段落
-      const autoMetaField = detectMetaFieldFromContent(srcContent, original)
-      if (autoMetaField) {
-        const { content: updated, matched } = applyMetaFieldChange(srcContent, autoMetaField, original, replacement)
+      // 套用所有替換
+      let srcContent = srcFile.content
+
+      // 明確標記 Meta Title/Description（extractMetaField 剝出來的 metaField）的修改一律優先處理，
+      // 且只鎖定 <title>/<meta> 標籤範圍替換。
+      // 原因：同一段文字常常同時被當作可見段落與 meta 內容（SEO 慣例），若先跑一般文字取代，
+      // 會用 split/join 把「所有」出現這段文字的地方都換掉（包括 meta 標籤），
+      // 導致後面才處理的 meta 修改因原文已經被換掉而找不到、誤判為失敗。
+      // 分組只看「明確標記」，不能用 detectMetaFieldFromContent 自動判斷來分組——
+      // 若段落文字剛好與 meta 內容一模一樣，會連沒標記的段落修改也一起誤判成 meta 修改，
+      // 導致段落本身永遠沒被換到。自動判斷留給下面第二輪、用當時最新的內容評估即可。
+      const metaChanges = urlChanges.filter(c => c.metaField)
+      const otherChanges = urlChanges.filter(c => !c.metaField)
+
+      for (const { original, replacement, metaField } of metaChanges) {
+        const { content: updated, matched } = applyMetaFieldChange(srcContent, metaField!, original, replacement)
         if (!matched) {
-          const fieldLabel = autoMetaField === 'title' ? 'Meta Title' : 'Meta Description'
+          const fieldLabel = metaField === 'title' ? 'Meta Title' : 'Meta Description'
           throw new Error(`找不到 ${fieldLabel} 原文「${original}」，請確認文字與頁面 <title>/<meta> 標籤內容完全一致。`)
         }
         srcContent = updated
-        continue
       }
 
-      // 插入方向由 parser.ts 依使用者的動詞明確指定（action），不要單靠 replacement 是否以
-      // original 開頭/結尾去猜——單純改寫句子時，新文字也可能剛好整段包住原文。
-      // 同時仍檢查字串形狀是否吻合，避免 action 標錯或內容不符預期格式時誤觸插入邏輯
-      const isInsertAfter = action === 'insertAfter' && replacement.startsWith(original)
-      const isInsertBefore = action === 'insertBefore' && replacement.endsWith(original)
-
-      if (srcContent.includes(original)) {
-        if (isInsertAfter || isInsertBefore) {
-          // 找到包含 original 的整行，在整行前後插入，避免新 block 元素嵌入原標籤內
-          const lines = srcContent.split('\n')
-          const lineIndex = lines.findIndex(line => line.includes(original))
-          if (lineIndex !== -1) {
-            const rawContent = replacement.slice(isInsertAfter ? original.length : 0, isInsertAfter ? undefined : -original.length).trimStart()
-            const newContent = wrapIfNeeded(rawContent, lines[lineIndex])
-            lines[lineIndex] = isInsertAfter
-              ? lines[lineIndex] + '\n' + newContent
-              : newContent + '\n' + lines[lineIndex]
-            srcContent = lines.join('\n')
-            continue
+      for (const { original, replacement, action } of otherChanges) {
+        // 沒有明確標記的修改，仍用內容自動判斷是否其實是在改 meta 欄位（見 detectMetaFieldFromContent）。
+        // 用「目前」的 srcContent 判斷：若上面那輪已經把 meta 標籤換成新文字，這裡就不會再誤判，
+        // 能正確落回一般文字取代，改到可見段落
+        const autoMetaField = detectMetaFieldFromContent(srcContent, original)
+        if (autoMetaField) {
+          const { content: updated, matched } = applyMetaFieldChange(srcContent, autoMetaField, original, replacement)
+          if (!matched) {
+            const fieldLabel = autoMetaField === 'title' ? 'Meta Title' : 'Meta Description'
+            throw new Error(`找不到 ${fieldLabel} 原文「${original}」，請確認文字與頁面 <title>/<meta> 標籤內容完全一致。`)
           }
+          srcContent = updated
+          continue
         }
-        // 換掉所有出現位置：同一段文字常同時出現在目錄錨點與內文標題（或其他重複引用處），
-        // 只換第一個會讓目錄跟內文標題不同步
-        srcContent = srcContent.split(original).join(replacement)
-        continue
-      }
-      // 找不到純文字時，逐行剝除 HTML 標籤後比對，找到包含該文字的整行就整行前後插入或替換
-      const lines = srcContent.split('\n')
-      const needle = collapseSpaces(original)
-      const lineIndex = lines.findIndex(line => collapseSpaces(stripTags(line)).includes(needle))
-      if (lineIndex !== -1) {
-        if (isInsertAfter) {
-          const newContent = wrapIfNeeded(replacement.slice(original.length).trimStart(), lines[lineIndex])
-          lines[lineIndex] = lines[lineIndex] + '\n' + newContent
-        } else if (isInsertBefore) {
-          const newContent = wrapIfNeeded(replacement.slice(0, -original.length).trimEnd(), lines[lineIndex])
-          lines[lineIndex] = newContent + '\n' + lines[lineIndex]
-        } else {
-          lines[lineIndex] = replacement
+
+        // 插入方向由 parser.ts 依使用者的動詞明確指定（action），不要單靠 replacement 是否以
+        // original 開頭/結尾去猜——單純改寫句子時，新文字也可能剛好整段包住原文。
+        // 同時仍檢查字串形狀是否吻合，避免 action 標錯或內容不符預期格式時誤觸插入邏輯
+        const isInsertAfter = action === 'insertAfter' && replacement.startsWith(original)
+        const isInsertBefore = action === 'insertBefore' && replacement.endsWith(original)
+
+        if (srcContent.includes(original)) {
+          if (isInsertAfter || isInsertBefore) {
+            // 找到包含 original 的整行，在整行前後插入，避免新 block 元素嵌入原標籤內
+            const lines = srcContent.split('\n')
+            const lineIndex = lines.findIndex(line => line.includes(original))
+            if (lineIndex !== -1) {
+              const rawContent = replacement.slice(isInsertAfter ? original.length : 0, isInsertAfter ? undefined : -original.length).trimStart()
+              const newContent = wrapIfNeeded(rawContent, lines[lineIndex])
+              lines[lineIndex] = isInsertAfter
+                ? lines[lineIndex] + '\n' + newContent
+                : newContent + '\n' + lines[lineIndex]
+              srcContent = lines.join('\n')
+              continue
+            }
+          }
+          // 換掉所有出現位置：同一段文字常同時出現在目錄錨點與內文標題（或其他重複引用處），
+          // 只換第一個會讓目錄跟內文標題不同步
+          srcContent = srcContent.split(original).join(replacement)
+          continue
         }
-        srcContent = lines.join('\n')
-        continue
+        // 找不到純文字時，逐行剝除 HTML 標籤後比對，找到包含該文字的整行就整行前後插入或替換
+        const lines = srcContent.split('\n')
+        const needle = collapseSpaces(original)
+        const lineIndex = lines.findIndex(line => collapseSpaces(stripTags(line)).includes(needle))
+        if (lineIndex !== -1) {
+          if (isInsertAfter) {
+            const newContent = wrapIfNeeded(replacement.slice(original.length).trimStart(), lines[lineIndex])
+            lines[lineIndex] = lines[lineIndex] + '\n' + newContent
+          } else if (isInsertBefore) {
+            const newContent = wrapIfNeeded(replacement.slice(0, -original.length).trimEnd(), lines[lineIndex])
+            lines[lineIndex] = newContent + '\n' + lines[lineIndex]
+          } else {
+            lines[lineIndex] = replacement
+          }
+          srcContent = lines.join('\n')
+          continue
+        }
+        throw new Error(`找不到原文「${original}」，請確認文字與頁面內容完全一致。`)
       }
-      throw new Error(`找不到原文「${original}」，請確認文字與頁面內容完全一致。`)
+
+      // Commit src
+      await octokit.repos.createOrUpdateFileContents({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        path: srcFile.path,
+        message: `seo: update content in ${srcFile.path.split('/').pop()}`,
+        content: Buffer.from(srcContent).toString('base64'),
+        sha: srcFile.sha,
+        branch: branchName,
+      })
+
+      modifiedPaths.push(srcFile.path)
+
+      const changeLines = urlChanges.map(({ original, replacement }) =>
+        `> 原文：${original}\n> 改文：${replacement}`
+      ).join('\n\n')
+      prBodySections.push(`**${url}**\n${changeLines}`)
     }
 
-    // Commit src
-    await octokit.repos.createOrUpdateFileContents({
+    // 開 PR
+    const { data: pr } = await octokit.pulls.create({
       owner: REPO_OWNER,
       repo: REPO_NAME,
-      path: srcFile.path,
-      message: `seo: update content in ${srcFile.path.split('/').pop()}`,
-      content: Buffer.from(srcContent).toString('base64'),
-      sha: srcFile.sha,
-      branch: branchName,
-    })
-
-    modifiedPaths.push(srcFile.path)
-
-    const changeLines = urlChanges.map(({ original, replacement }) =>
-      `> 原文：${original}\n> 改文：${replacement}`
-    ).join('\n\n')
-    prBodySections.push(`**${url}**\n${changeLines}`)
-  }
-
-  // 開 PR
-  const { data: pr } = await octokit.pulls.create({
-    owner: REPO_OWNER,
-    repo: REPO_NAME,
-    title: `[SEO] 內容優化 ${[...byUrl.keys()].map(u => new URL(u).pathname.split('/').pop()).join(', ')}`,
-    body: `## SEO 內容更新
+      title: `[SEO] 內容優化 ${[...byUrl.keys()].map(u => new URL(u).pathname.split('/').pop()).join(', ')}`,
+      body: `## SEO 內容更新
 
 **修改檔案**
 ${modifiedPaths.map(p => `- \`${p}\``).join('\n')}
@@ -359,9 +361,19 @@ ${prBodySections.join('\n\n---\n\n')}
 ---
 *此 PR 由 goface-bot 自動建立，由 @${slackUser} 發起*
 *dist 檔案將由 GitHub Actions 自動產出*`,
-    head: branchName,
-    base: BASE_BRANCH,
-  })
+      head: branchName,
+      base: BASE_BRANCH,
+    })
 
-  return { prUrl: pr.html_url, prNumber: pr.number }
+    return { prUrl: pr.html_url, prNumber: pr.number }
+  } catch (err) {
+    await octokit.git.deleteRef({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      ref: `heads/${branchName}`,
+    }).catch(cleanupErr => {
+      console.error(`清理孤兒 branch ${branchName} 失敗：`, cleanupErr)
+    })
+    throw err
+  }
 }
