@@ -43,11 +43,19 @@ function contentContains(content: string, text: string): boolean {
 // 但這個標籤本身不會出現在頁面原始碼裡，需剝除後才能比對
 const META_LABEL_RE = /^\s*Meta\s*(Title|Description)\s*[:：]\s*/i
 
+// 使用者也常習慣沿用「原文」改成「新文字」的打法，在 Meta Title：/Meta Description：
+// 後面再用「」把文字整個包起來（例如 Meta Title：「...」），但這層「」是使用者自己打的，
+// 不是頁面 <title>/<meta> 標籤的真實內容，要先剝掉才能比對成功
+function stripWrappingQuotes(text: string): string {
+  const wrapped = text.match(/^「([\s\S]*)」$/)
+  return wrapped ? wrapped[1] : text
+}
+
 function extractMetaField(text: string): { field: 'title' | 'description'; text: string } | null {
   const m = text.match(META_LABEL_RE)
   if (!m) return null
   const field = m[1].toLowerCase() === 'title' ? 'title' : 'description'
-  return { field, text: text.slice(m[0].length) }
+  return { field, text: stripWrappingQuotes(text.slice(m[0].length)) }
 }
 
 // title/description 在建立文章時會同時填入 <title>/og:title 或 description/og:description，
