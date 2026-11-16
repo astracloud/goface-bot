@@ -102,36 +102,36 @@ action 欄位規則（只有「插入」才需要，用來讓程式知道這是�
 輸出：{"taskType":"review_only","reviewUrl":"https://goface.me/blog/b29.html"}
 
 範例六（在 CTA 上方插入延伸閱讀）：
-輸入：在 https://www.goface.me/zh-TW/blog/zh-TW/b80.html 的 CTA 按鈕上方加上延伸閱讀「為什麼 AI 人臉辨識是考勤的未來？GoFace徹底解決代打卡與傳統刷卡機耗損問題」並使用超連結至 https://www.goface.me/zh-TW/blog/zh-TW/b81.html
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b80.html","original":"<a id=\"business_inquire\"","action":"insertBefore","replacement":"<p>延伸閱讀：<a href=\"https://www.goface.me/zh-TW/blog/zh-TW/b81.html\" target=\"_blank\" rel=\"noreferrer noopener\">為什麼 AI 人臉辨識是考勤的未來？GoFace徹底解決代打卡與傳統刷卡機耗損問題</a></p>\n                                        <a id=\"business_inquire\""}]}
+輸入：在 https://www.goface.me/zh-TW/blog/b80.html 的 CTA 按鈕上方加上延伸閱讀「為什麼 AI 人臉辨識是考勤的未來？GoFace徹底解決代打卡與傳統刷卡機耗損問題」並使用超連結至 https://www.goface.me/zh-TW/blog/b81.html
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b80.html","original":"<a id=\"business_inquire\"","action":"insertBefore","replacement":"<p>延伸閱讀：<a href=\"https://www.goface.me/zh-TW/blog/b81.html\" target=\"_blank\" rel=\"noreferrer noopener\">為什麼 AI 人臉辨識是考勤的未來？GoFace徹底解決代打卡與傳統刷卡機耗損問題</a></p>\n                                        <a id=\"business_inquire\""}]}
 
 範例六-b（在 CTA 按鈕下方插入純文字）：
-輸入：在 https://www.goface.me/zh-TW/blog/zh-TW/b80.html 的 CTA 按鈕下方加上「我是機器人」
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b80.html","original":"</a>\n                                        <h5 class=\"font-weight-400 mt-4\">為您的企業量身打造高效門禁方案</h5>","action":"insertAfter","replacement":"</a>\n                                        <p>我是機器人</p>\n                                        <h5 class=\"font-weight-400 mt-4\">為您的企業量身打造高效門禁方案</h5>"}]}
+輸入：在 https://www.goface.me/zh-TW/blog/b80.html 的 CTA 按鈕下方加上「我是機器人」
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b80.html","original":"</a>\n                                        <h5 class=\"font-weight-400 mt-4\">為您的企業量身打造高效門禁方案</h5>","action":"insertAfter","replacement":"</a>\n                                        <p>我是機器人</p>\n                                        <h5 class=\"font-weight-400 mt-4\">為您的企業量身打造高效門禁方案</h5>"}]}
 
 範例七（在某段文字上方插入純文字）：
-輸入：在 https://www.goface.me/zh-TW/blog/zh-TW/b80.html 的「GoFace (盛星科技) 致力於成為」上方加上「立即了解更多 GoFace 方案」
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b80.html","original":"GoFace (盛星科技) 致力於成為","action":"insertBefore","replacement":"<p>立即了解更多 GoFace 方案</p>\nGoFace (盛星科技) 致力於成為"}]}
+輸入：在 https://www.goface.me/zh-TW/blog/b80.html 的「GoFace (盛星科技) 致力於成為」上方加上「立即了解更多 GoFace 方案」
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b80.html","original":"GoFace (盛星科技) 致力於成為","action":"insertBefore","replacement":"<p>立即了解更多 GoFace 方案</p>\nGoFace (盛星科技) 致力於成為"}]}
 
 範例八（在某段文字下方插入延伸閱讀連結）：
-輸入：在 https://www.goface.me/zh-TW/blog/zh-TW/b79.html 的「雲端化與 AI 化是不可逆的趨勢」下方加上延伸閱讀「GoFace 完整方案介紹」連結到 https://www.goface.me/zh-TW/solution.html
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b79.html","original":"雲端化與 AI 化是不可逆的趨勢","action":"insertAfter","replacement":"雲端化與 AI 化是不可逆的趨勢\n<p>延伸閱讀：<a href=\"https://www.goface.me/zh-TW/solution.html\" target=\"_blank\" rel=\"noreferrer noopener\">GoFace 完整方案介紹</a></p>"}]}
+輸入：在 https://www.goface.me/zh-TW/blog/b79.html 的「雲端化與 AI 化是不可逆的趨勢」下方加上延伸閱讀「GoFace 完整方案介紹」連結到 https://www.goface.me/zh-TW/solution.html
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b79.html","original":"雲端化與 AI 化是不可逆的趨勢","action":"insertAfter","replacement":"雲端化與 AI 化是不可逆的趨勢\n<p>延伸閱讀：<a href=\"https://www.goface.me/zh-TW/solution.html\" target=\"_blank\" rel=\"noreferrer noopener\">GoFace 完整方案介紹</a></p>"}]}
 
 範例九（在文章結尾插入）：
-輸入：在 https://www.goface.me/zh-TW/blog/zh-TW/b80.html 的文章結尾加上「想進一步了解 GoFace 如何協助您的企業？立即預約免費顧問諮詢！」
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b80.html","original":"<!-- end: content -->","action":"insertBefore","replacement":"<p>想進一步了解 GoFace 如何協助您的企業？立即預約免費顧問諮詢！</p>\n                                <!-- end: content -->"}]}
+輸入：在 https://www.goface.me/zh-TW/blog/b80.html 的文章結尾加上「想進一步了解 GoFace 如何協助您的企業？立即預約免費顧問諮詢！」
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b80.html","original":"<!-- end: content -->","action":"insertBefore","replacement":"<p>想進一步了解 GoFace 如何協助您的企業？立即預約免費顧問諮詢！</p>\n                                <!-- end: content -->"}]}
 
 範例九-b（單純改寫句子，新文字整段包住原文——這是「改」不是「插入」，絕對不要加 action）：
-輸入：幫我改 https://www.goface.me/zh-TW/blog/zh-TW/b60.html 的「無需實體票券，完全消除黃牛轉售問題。」改成「這種創新的人臉票模式無需實體票券，完全消除黃牛轉售問題。」
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b60.html","original":"無需實體票券，完全消除黃牛轉售問題。","replacement":"這種創新的人臉票模式無需實體票券，完全消除黃牛轉售問題。"}]}
+輸入：幫我改 https://www.goface.me/zh-TW/blog/b60.html 的「無需實體票券，完全消除黃牛轉售問題。」改成「這種創新的人臉票模式無需實體票券，完全消除黃牛轉售問題。」
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b60.html","original":"無需實體票券，完全消除黃牛轉售問題。","replacement":"這種創新的人臉票模式無需實體票券，完全消除黃牛轉售問題。"}]}
 
 範例十（刪除某段文字）：
-輸入：刪除 https://www.goface.me/zh-TW/blog/zh-TW/b80.html 的「我是機器人愛吃蘋果蘋果。」
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b80.html","original":"我是機器人愛吃蘋果蘋果。","replacement":""}]}
+輸入：刪除 https://www.goface.me/zh-TW/blog/b80.html 的「我是機器人愛吃蘋果蘋果。」
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b80.html","original":"我是機器人愛吃蘋果蘋果。","replacement":""}]}
 
 範例十一（多段刪除）：
-輸入：刪除 https://www.goface.me/zh-TW/blog/zh-TW/b80.html 的「文字A」和「文字B」
-輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b80.html","original":"文字A","replacement":""},{"url":"https://www.goface.me/zh-TW/blog/zh-TW/b80.html","original":"文字B","replacement":""}]}
+輸入：刪除 https://www.goface.me/zh-TW/blog/b80.html 的「文字A」和「文字B」
+輸出：{"taskType":"update_file","changes":[{"url":"https://www.goface.me/zh-TW/blog/b80.html","original":"文字A","replacement":""},{"url":"https://www.goface.me/zh-TW/blog/b80.html","original":"文字B","replacement":""}]}
 
 輸入：你好
 輸出：{"taskType":"unknown"}`
