@@ -143,17 +143,30 @@ async function findSrcFile(url: string, original: string): Promise<{ path: strin
   const BASE_PATH = process.env.GITHUB_CONTENT_BASE_PATH || 'src'
   const urlObj = new URL(url)
   const pathname = urlObj.pathname
+  const langMatch = pathname.match(/^\/(zh-TW|en-US|ja-JP)\//)
+  const lang = langMatch?.[1]
+  const strippedPath = pathname.replace(/^\/(zh-TW|en-US|ja-JP)\//, '/')
 
   // 先試 src html（去掉語系前綴）
-  const srcHtmlPath = `${BASE_PATH}${pathname.replace(/^\/(zh-TW|en-US|ja-JP)\//, '/')}`
+  const srcHtmlPath = `${BASE_PATH}${strippedPath}`
   const srcHtmlFile = await fetchFile(srcHtmlPath)
   if (srcHtmlFile && contentContains(srcHtmlFile.content, original)) {
     return { path: srcHtmlPath, ...srcHtmlFile }
   }
 
+  // 部落格文章網址有時會少打 blog 下面那層語系（例如 /zh-TW/blog/b81.html，
+  // 正確應為 /zh-TW/blog/zh-TW/b81.html），但網站本身對短網址也會正常回應，
+  // 使用者貼連結或做 SEO 審查時可能就這樣存下來。實際 src 路徑一定帶這層語系，這裡補上再試一次
+  const blogFileMatch = strippedPath.match(/^\/blog\/([^/]+\.html)$/)
+  if (lang && blogFileMatch) {
+    const altPath = `${BASE_PATH}/blog/${lang}/${blogFileMatch[1]}`
+    const altFile = await fetchFile(altPath)
+    if (altFile && contentContains(altFile.content, original)) {
+      return { path: altPath, ...altFile }
+    }
+  }
+
   // 找不到就去 lang json 找
-  const langMatch = pathname.match(/^\/(zh-TW|en-US|ja-JP)\//)
-  const lang = langMatch?.[1]
   if (!lang) return null
 
   const pageName = pathname.split('/').pop()?.replace('.html', '')
