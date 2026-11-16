@@ -154,9 +154,9 @@ async function findSrcFile(url: string, original: string): Promise<{ path: strin
     return { path: srcHtmlPath, ...srcHtmlFile }
   }
 
-  // 部落格文章網址有時會少打 blog 下面那層語系（例如 /zh-TW/blog/b81.html，
-  // 正確應為 /zh-TW/blog/zh-TW/b81.html），但網站本身對短網址也會正常回應，
-  // 使用者貼連結或做 SEO 審查時可能就這樣存下來。實際 src 路徑一定帶這層語系，這裡補上再試一次
+  // 現在網址規則是短網址（例如 /zh-TW/blog/b81.html），不再有 blog 下面那層語系，
+  // 但實際 src 檔案還是放在舊的巢狀路徑（src/blog/zh-TW/b81.html），所以上面去掉外層語系
+  // 直接試的路徑一定找不到，這裡要補回語系、組出巢狀路徑再試一次
   const blogFileMatch = strippedPath.match(/^\/blog\/([^/]+\.html)$/)
   if (lang && blogFileMatch) {
     const altPath = `${BASE_PATH}/blog/${lang}/${blogFileMatch[1]}`
