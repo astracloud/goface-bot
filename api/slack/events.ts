@@ -12,7 +12,13 @@ function getRawBody(req: IncomingMessage): Promise<string> {
 import { Octokit } from '@octokit/rest'
 import { parseSlackMessage } from '../../parser'
 import { createSEOPullRequest } from '../../update-file'
-import { reviewPageSEO } from '../../review-seo'
+import {
+  reviewPageSEO,
+  parseApplyCommand,
+  findSeoReviewInThread,
+  applySeoSuggestions,
+  buildSeoReviewMetadata,
+} from '../../review-seo'
 import { replyToSlack } from '../../slack'
 import { verifySlackSignature } from '../../verify'
 
@@ -78,8 +84,20 @@ async function processInBackground(event: any) {
   const channel: string = event.channel
   const ts: string = event.ts
   const slackUser: string = event.user || 'unknown'
+  const threadTs: string | undefined = event.thread_ts
 
   try {
+    // 在 thread 裡回覆「套用 1,3」「全部套用」：不走 GPT 解析，直接比對關鍵字，
+    // 回頭讀同一個 thread 裡上一次 SEO 審查存的結構化建議來開 PR
+    const cleanText = message.replace(/<@[A-Z0-9]+>/g, '').trim()
+    const applyCmd = threadTs ? parseApplyCommand(cleanText) : null
+
+    if (applyCmd) {
+      await replyToSlack(channel, ts, '⏳ 處理中，請稍候...')
+      await handleApplySeoReview({ applyCmd, channel, threadTs: threadTs!, ts, slackUser })
+      return
+    }
+
     await replyToSlack(channel, ts, '⏳ 處理中，請稍候...')
 
     const parsed = await parseSlackMessage(message)
@@ -123,9 +141,10 @@ async function processInBackground(event: any) {
             '⚠️ 請提供要審查的網址。\n\n例：幫我看看 https://goface.me/blog/b29.html 的 SEO')
           return
         }
-        const analysis = await reviewPageSEO(parsed.reviewUrl)
+        const { slackText, suggestions } = await reviewPageSEO(parsed.reviewUrl)
         await replyToSlack(channel, ts,
-          `*🔍 SEO 審查報告*\n${parsed.reviewUrl}\n\n${analysis}`)
+          `*🔍 SEO 審查報告*\n${parsed.reviewUrl}\n\n${slackText}`,
+          suggestions.length ? buildSeoReviewMetadata(parsed.reviewUrl, suggestions) : undefined)
         break
       }
 
@@ -141,4 +160,36 @@ async function processInBackground(event: any) {
     await replyToSlack(channel, ts,
       `❌ 發生錯誤：${error.message || '請稍後再試或聯繫管理員。'}`)
   }
+}
+
+async function handleApplySeoReview(params: {
+  applyCmd: { all: boolean; indices: number[] }
+  channel: string
+  threadTs: string
+  ts: string
+  slackUser: string
+}) {
+  const { applyCmd, channel, threadTs, ts, slackUser } = params
+
+  const record = await findSeoReviewInThread(channel, threadTs)
+  if (!record) {
+    await replyToSlack(channel, ts,
+      '⚠️ 在這個 thread 裡找不到可以套用的 SEO 審查紀錄，請先用「幫我看看 [網址] 的 SEO」產生報告。')
+    return
+  }
+
+  const { url, suggestions } = record
+  const selected = applyCmd.all
+    ? suggestions
+    : applyCmd.indices.map(i => suggestions[i - 1]).filter(Boolean)
+
+  if (selected.length === 0) {
+    await replyToSlack(channel, ts,
+      `⚠️ 找不到對應的建議編號（這份報告共有 ${suggestions.length} 條可套用建議）。`)
+    return
+  }
+
+  const { prUrl, prNumber } = await applySeoSuggestions({ url, suggestions: selected, slackUser })
+  await replyToSlack(channel, ts,
+    `✅ 已套用 ${selected.length} 條建議，PR 已建立！\n\n*PR #${prNumber}*\n${prUrl}\n\n請 <@U0819C25K51> review 後 merge。`)
 }
